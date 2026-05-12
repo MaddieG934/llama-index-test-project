@@ -1,5 +1,4 @@
 import os
-import asyncio
 import chainlit as cl
 
 from llama_index.llms.openai import OpenAI
@@ -32,7 +31,7 @@ except:
 # Get tools
 
 # Multiply two numbers tool
-def multiply(a, b):
+def multiply(a: float, b: float):
     return a * b
 
 multiply_tool = FunctionTool.from_defaults(fn=multiply)
@@ -57,13 +56,7 @@ agent = FunctionAgent(
 @cl.on_chat_start
 async def start():
 
-    # Set model, embeddings, context window, and callback manager
-    Settings.llm = OpenAI(
-        model='gpt-4o-mini',
-        temperature=0.1,
-        max_tokens=1024,
-        streaming=True
-    )
+    # Set embeddings, context window, and callback manager
     Settings.embed_model = OpenAIEmbedding(model='text-embedding-3-small')
     Settings.context_window = 4096
     Settings.callback_manager=CallbackManager([cl.LlamaIndexCallbackHandler()])
