@@ -15,13 +15,15 @@ from llama_index.core import (
 )
 
 from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.tools import FunctionTool
+from llama_index.core.tools import QueryEngineTool
 from llama_index.core.query_engine.retriever_query_engine import RetrieverQueryEngine
 from llama_index.core.callbacks import CallbackManager
-from llama_index.core.service_context import ServiceContext
+from numpy import multiply
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# Load context
+# Load stored context
 try:
     storage_context = StorageContext.from_defaults(persist_dir='./storage')
     index = load_index_from_storage(storage_context)
@@ -30,24 +32,33 @@ except:
     index = VectorStoreIndex.from_documents(documents)
     index.storage_context.persist()
 
+# Get tools
+multiply_tool = FunctionTool.from_defaults(fn=multiply)
+
+query_engine = index.as_query_engine(streaming=True, similarity_top_k=2)
+query_tool = QueryEngineTool.from_defaults(
+    query_engine=query_engine,
+    name='document search',
+    description='searches provided documents'
+)
+
 # Start chat session
 @cl.on_chat_start
 async def start():
 
     # Create an agent workflow with tools
     agent = FunctionAgent(
-        tools = [multiply],
+        tools = [multiply_tool, query_tool],
         llm = OpenAI(model='gpt-4o-mini', temperature=0.1, max_tokens=1024, streaming=True),
         system_prompt = 'You are a helpful assistant that can multiply two numbers.',
     )
 
-    # Set model, embeddings, and context window
+    # Set model, embeddings, context window, and callback manager
     Settings.llm = agent.llm
     Settings.embed_model = OpenAIEmbedding(model='text-embedding-3-small')
     Settings.context_window = 4096
+    Settings.callback_manager=CallbackManager([cl.LlamaIndexCallbackHandler()])
 
-    service_context = ServiceContext.from_defaults(callback_manager=CallbackManager([cl.LlamaIndexCallbackHandler()]))
-    query_engine = index.as_query_engine(streaming=True, similarity_top_k=2, service_context=service_context)
     cl.user_session.set('query_engine', query_engine)
 
     # First prompt
@@ -68,7 +79,3 @@ async def main(message: cl.Message):
     for token in res.response_gen:
         await msg.stream_token(token)
     await msg.send()
-
-# Define a tool for multiplying two numbers
-def multiply(a: float, b: float) -> float:
-    return a * b
