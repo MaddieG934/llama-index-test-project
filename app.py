@@ -2,7 +2,6 @@ import os
 import asyncio
 import chainlit as cl
 
-from llama_index.llms import openai
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 
@@ -17,11 +16,9 @@ from llama_index.core import (
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.tools import FunctionTool
 from llama_index.core.tools import QueryEngineTool
-from llama_index.core.query_engine.retriever_query_engine import RetrieverQueryEngine
 from llama_index.core.callbacks import CallbackManager
-from numpy import multiply
 
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+os.environ['OPENAI_API_KEY']
 
 # Load stored context
 try:
@@ -30,31 +27,43 @@ try:
 except:
     documents = SimpleDirectoryReader('./data').load_data(show_progress=True)
     index = VectorStoreIndex.from_documents(documents)
-    index.storage_context.persist()
+    index.storage_context.persist(persist_dir='./storage')
 
 # Get tools
+
+# Multiply two numbers tool
+def multiply(a, b):
+    return a * b
+
 multiply_tool = FunctionTool.from_defaults(fn=multiply)
 
+# Query tool
 query_engine = index.as_query_engine(streaming=True, similarity_top_k=2)
+
 query_tool = QueryEngineTool.from_defaults(
     query_engine=query_engine,
     name='document search',
     description='searches provided documents'
 )
 
+# Create an agent workflow with tools
+agent = FunctionAgent(
+    tools = [multiply_tool, query_tool],
+    llm = OpenAI(model='gpt-4o-mini', temperature=0.1, max_tokens=1024, streaming=True),
+    system_prompt = 'You are a helpful assistant that can multiply two numbers and answer questions about provided documents.',
+)
+
 # Start chat session
 @cl.on_chat_start
 async def start():
 
-    # Create an agent workflow with tools
-    agent = FunctionAgent(
-        tools = [multiply_tool, query_tool],
-        llm = OpenAI(model='gpt-4o-mini', temperature=0.1, max_tokens=1024, streaming=True),
-        system_prompt = 'You are a helpful assistant that can multiply two numbers.',
-    )
-
     # Set model, embeddings, context window, and callback manager
-    Settings.llm = agent.llm
+    Settings.llm = OpenAI(
+        model='gpt-4o-mini',
+        temperature=0.1,
+        max_tokens=1024,
+        streaming=True
+    )
     Settings.embed_model = OpenAIEmbedding(model='text-embedding-3-small')
     Settings.context_window = 4096
     Settings.callback_manager=CallbackManager([cl.LlamaIndexCallbackHandler()])
@@ -69,13 +78,11 @@ async def start():
 # Manage queries
 @cl.on_message
 async def main(message: cl.Message):
-
-    query_engine = cl.user_session.get('query_engine') # Instantiate RetrieverQueryEngine
     
     # Get prompt and generate response
     msg = cl.Message(content='', author='Assistant')
-    res = await cl.make_async(query_engine.query)(message.content)
+    res = await agent.stream_chat(message.content)
 
-    for token in res.response_gen:
+    async for token in res.async_response_gen:
         await msg.stream_token(token)
     await msg.send()
